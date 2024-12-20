@@ -114,7 +114,7 @@ _version_tag = tag_class(
         "version": attr.string(mandatory = True),
         "tflint_version": attr.string(default = TFLINT_VERSION),
         "tfdoc_version": attr.string(default = TFDOC_VERSION),
-        "mirror": attr.string_dict(mandatory = True),
+        "mirror": attr.string_list_dict(mandatory = True),
     },
 )
 

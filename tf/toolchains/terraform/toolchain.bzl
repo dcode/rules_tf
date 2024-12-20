@@ -42,41 +42,41 @@ def _download_impl(ctx):
     if not res.success:
         fail("!failed to dl: ", url)
 
-    providers = {}
     for k in ctx.attr.mirror:
-        v = ctx.attr.mirror[k]
-        elems = v.split(":")
-        if len(elems) != 2:
-            fail("provider version format must be org/provider:x.y.x, was: %s".format(v))
+        for v in ctx.attr.mirror[k]:
+            providers = {}
+            elems = v.split(":")
+            if len(elems) != 2:
+                fail("provider version format must be org/provider:x.y.x, was: %s".format(v))
 
-        provider_elems = elems[0].split("/")
-        if len(provider_elems) != 2:
-            fail("provider version format must be org/provider:x.y.z, was: %s".format(v))
+            provider_elems = elems[0].split("/")
+            if len(provider_elems) != 2:
+                fail("provider version format must be org/provider:x.y.z, was: %s".format(v))
 
-        version = elems[1]
-        version_elems = version.split(".")
-        if len(version_elems) != 3:
-            fail("provider version format must be org/provider:x.y.z, was: %s".format(v))
+            version = elems[1]
+            version_elems = version.split(".")
+            if len(version_elems) != 3:
+                fail("provider version format must be org/provider:x.y.z, was: %s".format(v))
 
-        providers[k] = {
-            "source": elems[0], "version": elems[1],
-        }
-
-    versions_tf = {
-        "terraform": [
-            {
-                "required_providers": [dict([(p, providers[p]) for p in providers ])],
+            providers[k] = {
+                "source": elems[0], "version": elems[1],
             }
-        ]
-    }
 
-    ctx.file("versions.tf.json", content = json.encode(versions_tf))
+            versions_tf = {
+                "terraform": [
+                    {
+                        "required_providers": [dict([(p, providers[p]) for p in providers ])],
+                    }
+                ]
+            }
 
-    ctx.execute([
-        "bash",
-        "-c",
-        "mkdir -p mirror; terraform/terraform providers mirror ./mirror > /dev/null",
-        ])
+            ctx.file("versions.tf.json", content = json.encode(versions_tf))
+
+            ctx.execute([
+                "bash",
+                "-c",
+                "mkdir -p mirror; terraform/terraform providers mirror ./mirror > /dev/null",
+                ])
 
     return
 
@@ -86,7 +86,7 @@ terraform_download = repository_rule(
         "version": attr.string(mandatory = True),
         "os": attr.string(mandatory = True),
         "arch": attr.string(mandatory = True),
-        "mirror": attr.string_dict(mandatory = True),
+        "mirror": attr.string_list_dict(mandatory = True),
     }
 )
 

@@ -6,20 +6,9 @@ load("@rules_tf//tf/rules:tf-providers-versions.bzl", _tf_providers_versions = "
 load("@rules_tf//tf/rules:tf-lint.bzl", "tf_lint_test")
 load("@rules_tf//tf/rules:tf-module.bzl", _tf_module = "tf_module", "tf_module_deps", "tf_artifact", "tf_validate_test", _tf_format = "tf_format", "tf_format_test")
 
-bzl_files = [
-    "**/*.bzl",
-    "**/*.bazel",
-    "**/WORKSPACE*",
-    "**/BUILD",
-]
-
-tf_build_files = [
-    "**/.terraform",
-    "**/.terraform.lock.hcl",
-]
-
 def tf_module(name,
               providers_versions = None,
+              srcs= [],
               data = [],
               size="small",
               providers = [],
@@ -41,7 +30,7 @@ def tf_module(name,
 
     pkg_files(
         name = "srcs",
-        srcs = native.glob(["**/*"], exclude=bzl_files + tf_build_files) + data,
+        srcs = srcs + data,
         include_runfiles=True,
         strip_prefix = "", # this is important to preserve directory structure
         prefix = native.package_name(),

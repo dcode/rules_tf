@@ -13,6 +13,11 @@ bzl_files = [
     "**/BUILD",
 ]
 
+tf_build_files = [
+    "**/.terraform",
+    "**/.terraform.lock.hcl",
+]
+
 def tf_module(name,
               providers_versions = None,
               data = [],
@@ -36,7 +41,7 @@ def tf_module(name,
 
     pkg_files(
         name = "srcs",
-        srcs = native.glob(["**/*"], exclude=bzl_files) + data,
+        srcs = native.glob(["**/*"], exclude=bzl_files + tf_build_files) + data,
         include_runfiles=True,
         strip_prefix = "", # this is important to preserve directory structure
         prefix = native.package_name(),

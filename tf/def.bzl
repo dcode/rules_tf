@@ -37,6 +37,7 @@ def tf_module(name,
     pkg_files(
         name = "srcs",
         srcs = native.glob(["**/*"], exclude=bzl_files) + data,
+        include_runfiles=True,
         strip_prefix = "", # this is important to preserve directory structure
         prefix = native.package_name(),
         tags = tags,

@@ -200,3 +200,57 @@ and run the following command to generate docs for all sub packages.
 ``` bash
 bazel run //path/to:tffmt
 ```
+
+1. Deployment (Plan & Apply)
+
+It is possible to generate deployment targets (plan, apply, test) for a module.
+This allows running `terraform plan` and `terraform apply` via Bazel.
+
+```python
+load("@rules_tf//tf:def.bzl", "tf_deployment", "tf_module")
+
+tf_module(
+    name = "root-mod-a",
+    srcs = glob(["*.tf", "*.tf.json"]),
+    ...
+)
+
+tf_deployment(
+    name = "deployment",
+    module = ":root-mod-a",
+)
+```
+
+This will generate the following targets:
+- `//package:deployment.plan`: Generates the `plan.tfplan` artifact.
+- `//package:deployment.apply`: Executable that runs `terraform apply plan.tfplan`.
+- `//package:deployment.test`: Test that verifies `terraform plan` runs successfully.
+
+You can run them as follows:
+
+```bash
+# Generate Plan
+bazel build //package:deployment.plan
+
+# Apply Plan
+bazel run //package:deployment.apply
+
+# Test Plan (CI)
+bazel test //package:deployment.test
+```
+
+### Configuration
+
+You can configure variable files and backend configuration:
+
+```python
+tf_deployment(
+    name = "infra",
+    module = ":root-mod-a",
+    # Optional: Defaults to glob(["terraform.tfvars", "*.auto.tfvars", ...])
+    tf_vars_files = glob(["dev.tfvars"]),
+    # Optional: Backend config file or key=value pairs
+    tf_backend_config = "dev.backend.tfvars",
+    # Or: tf_backend_config = "bucket=mybucket,prefix=env/dev"
+)
+```

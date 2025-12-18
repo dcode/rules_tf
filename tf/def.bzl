@@ -4,6 +4,7 @@ load("@rules_tf//tf/rules:tf-gen-doc.bzl", _tf_gen_doc = "tf_gen_doc" )
 load("@rules_tf//tf/rules:tf-gen-versions.bzl", "tf_gen_versions")
 load("@rules_tf//tf/rules:tf-providers-versions.bzl", _tf_providers_versions = "tf_providers_versions")
 load("@rules_tf//tf/rules:tf-lint.bzl", "tf_lint_test")
+load("@rules_tf//tf/rules:tf-deployment.bzl", _tf_deployment = "tf_deployment")
 load("@rules_tf//tf/rules:tf-module.bzl", _tf_module = "tf_module", "tf_module_deps", "tf_artifact", "tf_validate_test", _tf_format = "tf_format", "tf_format_test")
 
 def tf_module(name,
@@ -31,7 +32,6 @@ def tf_module(name,
     pkg_files(
         name = "srcs",
         srcs = srcs + data,
-        include_runfiles=True,
         strip_prefix = "", # this is important to preserve directory structure
         prefix = native.package_name(),
         tags = tags,
@@ -116,5 +116,15 @@ def tf_providers_versions(name, tf_version = "", providers = {}, tags = ["no-san
         tf_version = tf_version,
         visibility = ["//visibility:public"],
         tags = tags,
+        **kwargs
+    )
+
+def tf_deployment(name, module, tf_vars_files = None, tf_backend_config = None, visibility = ["//visibility:public"], **kwargs):
+    _tf_deployment(
+        name = name,
+        module = module,
+        tf_vars_files = tf_vars_files,
+        tf_backend_config = tf_backend_config,
+        visibility = visibility,
         **kwargs
     )

@@ -250,7 +250,7 @@ tf_deployment(
     # Optional: Defaults to glob(["terraform.tfvars", "*.auto.tfvars", ...])
     tf_vars_files = glob(["dev.tfvars"]),
     # Optional: Backend config file or key=value pairs
-    tf_backend_config = "dev.backend.tfvars",
+    tf_backend_config = "dev.backend.tfbackend",
     # Or: tf_backend_config = "bucket=mybucket,prefix=env/dev"
 )
 ```

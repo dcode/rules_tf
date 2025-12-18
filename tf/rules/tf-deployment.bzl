@@ -20,12 +20,12 @@ def _tf_plan_impl(ctx):
     # Prepare var file arguments
     var_args = []
     for vf in var_files:
-        var_args.append("-var-file=" + vf.path)
+        var_args.append("-var-file=$PWD/" + vf.path)
 
     # Backend config
     backend_args = []
     if ctx.file.tf_backend_config:
-        backend_args.append("-backend-config=" + ctx.file.tf_backend_config.path)
+        backend_args.append("-backend-config=$PWD/" + ctx.file.tf_backend_config.path)
         all_srcs.append(ctx.file.tf_backend_config)
     elif ctx.attr.tf_backend_config_vals:
         for kv in ctx.attr.tf_backend_config_vals.split(","):
@@ -73,7 +73,7 @@ def _tf_plan_impl(ctx):
         plan_cmd += " " + arg
 
     # Combine commands
-    cmd = "set -e\n" + init_cmd + "\n" + plan_cmd
+    cmd = "set -e\nexport TF_IN_AUTOMATION=1\n" + init_cmd + "\n" + plan_cmd
 
     ctx.actions.run_shell(
         outputs = [plan_file],

@@ -2,6 +2,7 @@ load("@rules_tf//tf:def.bzl", "tf_module")
 
 tf_module(
     name = "mod-a",
+    srcs = glob(["*.tf", "*.tf.json"]),
     providers = [
         "random",
     ],

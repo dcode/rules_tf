@@ -95,6 +95,8 @@ tf_toolchain(
    name = "{toolchain_repo}_toolchain_impl",
    tf = "@{toolchain_repo}//:runtime",
    mirror = "@{toolchain_repo}//:mirror",
+   os = "{os}",
+   arch = "{arch}",
 )
 
 toolchain(

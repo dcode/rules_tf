@@ -1,298 +1,223 @@
 load("@rules_tf//tf/rules:providers.bzl", "TfModuleInfo")
 load("@bazel_skylib//lib:paths.bzl", "paths")
 
-def _tf_plan_impl(ctx):
+def _tf_package_impl(ctx):
     tf_runtime = ctx.toolchains["@rules_tf//:tf_toolchain_type"].runtime
     module = ctx.attr.module[TfModuleInfo]
 
     # Collect all transitive sources
     all_srcs = module.transitive_srcs.to_list()
-
-    # Collect var files
     var_files = ctx.files.tf_vars_files
+    backend_config = ctx.file.tf_backend_config
 
-    # Construct the command
-    # We need to setup the workspace, link files, and run init + plan
+    # Output tarball
+    output_tar = ctx.actions.declare_file("{}.{}.tar.gz".format(ctx.label.name, tf_runtime.arch))
 
-    # Output plan file
-    plan_file = ctx.actions.declare_file(ctx.label.name + ".tfplan")
+    # Helper script to generate manifest and tarball
+    builder_script = ctx.actions.declare_file(ctx.label.name + "_builder.py")
 
-    # Prepare var file arguments
-    var_args = []
+    # We use template substitution for the python script to avoid conflicts with python's own {}
+    # and to inject the architecture.
+    builder_content = """
+import os
+import tarfile
+import hashlib
+import json
+import sys
+import shutil
+
+def sha256_file(filepath):
+    hash_sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_sha256.update(chunk)
+    return hash_sha256.hexdigest()
+
+def main():
+    output_tar_path = sys.argv[1]
+    tf_binary = sys.argv[2]
+    mirror_dir = sys.argv[3]
+    module_path = sys.argv[4]
+    run_sh_path = sys.argv[5]
+
+    files_map = {}
+    for arg in sys.argv[6:]:
+        if "=" in arg:
+            dst, src = arg.split("=", 1)
+            files_map[dst] = src
+
+    manifest_files = []
+
+    # We will collect operations to perform on the tarball
+    # list of (local_path, arc_name)
+    files_to_add = []
+
+    # Add run.sh
+    files_to_add.append((run_sh_path, "run.sh"))
+    manifest_files.append({
+        "path": "run.sh",
+        "sha256": sha256_file(run_sh_path)
+    })
+
+    # Add binary
+    bin_name = os.path.basename(tf_binary)
+    files_to_add.append((tf_binary, "bin/" + bin_name))
+    manifest_files.append({
+        "path": "bin/" + bin_name,
+        "sha256": sha256_file(tf_binary)
+    })
+
+    # Add mirror
+    for root, dirs, files in os.walk(mirror_dir):
+        for file in files:
+            full_path = os.path.join(root, file)
+            rel_path = os.path.relpath(full_path, mirror_dir)
+            arc_path = "mirror/" + rel_path
+            files_to_add.append((full_path, arc_path))
+            manifest_files.append({
+                "path": arc_path,
+                "sha256": sha256_file(full_path)
+            })
+
+    # Add sources
+    for dst, src in files_map.items():
+        arc_path = "src/" + dst
+        files_to_add.append((src, arc_path))
+        manifest_files.append({
+            "path": arc_path,
+            "sha256": sha256_file(src)
+        })
+
+    # Create manifest
+    manifest = {
+        "arch": "%ARCH%",
+        "entrypoint": "run.sh",
+        "files": manifest_files
+    }
+
+    with open("manifest.json", "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    # Add manifest to the list
+    files_to_add.append(("manifest.json", "manifest.json"))
+
+    # Write tarball
+    with tarfile.open(output_tar_path, "w:gz") as tar:
+        for local_path, arc_name in files_to_add:
+            tar.add(local_path, arcname=arc_name)
+
+if __name__ == "__main__":
+    main()
+"""
+    # Replace the placeholder manually
+    builder_content = builder_content.replace("%ARCH%", tf_runtime.arch)
+
+    ctx.actions.write(builder_script, builder_content)
+
+    tf_bin_name = tf_runtime.tf.basename
+
+    var_args_list = []
     for vf in var_files:
-        var_args.append("-var-file=$PWD/" + vf.path)
+         var_args_list.append("-var-file=$ROOT/src/" + vf.path)
 
-    # Backend config
-    backend_args = []
-    if ctx.file.tf_backend_config:
-        backend_args.append("-backend-config=$PWD/" + ctx.file.tf_backend_config.path)
-        all_srcs.append(ctx.file.tf_backend_config)
+    var_args_str = " ".join(var_args_list)
+
+    backend_args_str = ""
+    if backend_config:
+        backend_args_str = "-backend-config=$ROOT/src/" + backend_config.path
     elif ctx.attr.tf_backend_config_vals:
+        vals = []
         for kv in ctx.attr.tf_backend_config_vals.split(","):
-            backend_args.append("-backend-config=" + kv)
+            vals.append("-backend-config=" + kv)
+        backend_args_str = " ".join(vals)
 
-    # Command construction
-    # We use a wrapper script to handle the execution environment
-
-    # Resolve plugin mirror path relative to execution root
-    plugin_dir = tf_runtime.mirror.path
-
-    # Construct the shell command
-    # 1. Copy sources to a sandbox directory to avoid polluting source tree and handle generated files
-    # However, Bazel sandboxing handles most of this. We just need to ensure we run in the right directory.
-    # The `tf_module` rule preserves directory structure.
-
-    # We need to run terraform in the directory containing the root module sources.
-    # Since `tf_module` collects sources from deps, we rely on the `module_path` from TfModuleInfo.
-
-    module_dir = module.module_path
-
-    # Terraform init command
-    init_cmd = "{tf} -chdir={dir} init -input=false -plugin-dir=$PWD/{plugin_dir}".format(
-        tf = tf_runtime.tf.path,
-        dir = module_dir,
-        plugin_dir = plugin_dir,
-    )
-    for arg in backend_args:
-        init_cmd += " " + arg
-
-    # Terraform plan command
-    # We need to output the plan to the declare_file location
-    # Note: plan output path must be absolute or relative to the working directory (-chdir)
-    # Since we use -chdir, we need to be careful.
-    # $PWD is the runfiles root (execroot).
-    # {plan_path} is relative to execroot.
-    # So if we are in {dir}, we need to refer to $PWD/{plan_path}
-
-    plan_cmd = "{tf} -chdir={dir} plan -input=false -out=$PWD/{plan_path}".format(
-        tf = tf_runtime.tf.path,
-        dir = module_dir,
-        plan_path = plan_file.path,
-    )
-    for arg in var_args:
-        plan_cmd += " " + arg
-
-    # Combine commands
-    cmd = "set -e\nexport TF_IN_AUTOMATION=1\n" + init_cmd + "\n" + plan_cmd
-
-    ctx.actions.run_shell(
-        outputs = [plan_file],
-        inputs = all_srcs + var_files + tf_runtime.deps,
-        command = cmd,
-        mnemonic = "TerraformPlan",
-        use_default_shell_env = True,
-    )
-
-    return [
-        DefaultInfo(files = depset([plan_file])),
-        TfModuleInfo(
-            files = module.files,
-            deps = module.deps,
-            transitive_srcs = module.transitive_srcs,
-            module_path = module.module_path,
-        )
-    ]
-
-tf_plan = rule(
-    implementation = _tf_plan_impl,
-    attrs = {
-        "module": attr.label(providers = [TfModuleInfo], mandatory = True),
-        "tf_vars_files": attr.label_list(allow_files = True),
-        "tf_backend_config": attr.label(allow_single_file = True),
-        "tf_backend_config_vals": attr.string(),
-    },
-    toolchains = ["@rules_tf//:tf_toolchain_type"],
-)
-
-def _tf_apply_impl(ctx):
-    tf_runtime = ctx.toolchains["@rules_tf//:tf_toolchain_type"].runtime
-    module = ctx.attr.module[TfModuleInfo]
-    plan_file = ctx.file.plan
-
-    # executable script
-    script = ctx.actions.declare_file(ctx.label.name + ".sh")
-
-    module_dir = module.module_path
-    plugin_dir = tf_runtime.mirror.short_path
-
-    # We need to re-init because apply is a separate action/run
-    # For `bazel run`, we are in the runfiles tree.
-
-    # Backend config (needed for init)
-    backend_args = []
-    if ctx.file.tf_backend_config:
-        backend_args.append("-backend-config=$PWD/" + ctx.file.tf_backend_config.short_path)
-    elif ctx.attr.tf_backend_config_vals:
-        for kv in ctx.attr.tf_backend_config_vals.split(","):
-            backend_args.append("-backend-config=" + kv)
-
-    init_cmd = "{tf} -chdir={dir} init -input=false -plugin-dir=$PWD/{plugin_dir}".format(
-        tf = tf_runtime.tf.short_path,
-        dir = module_dir,
-        plugin_dir = plugin_dir,
-    )
-    for arg in backend_args:
-        init_cmd += " " + arg
-
-    apply_cmd = "{tf} -chdir={dir} apply -input=false $PWD/{plan_path}".format(
-        tf = tf_runtime.tf.short_path,
-        dir = module_dir,
-        plan_path = plan_file.short_path,
-    )
-
-    # Content of the wrapper script
-    content = """#!/bin/bash
+    run_script = ctx.actions.declare_file("run.sh")
+    run_script_content = """#!/bin/bash
 set -e
+
+ROOT=$(pwd)
+BIN=$ROOT/bin/{bin_name}
+PLUGIN_DIR=$ROOT/mirror
+SRC_DIR=$ROOT/src/{module_dir}
+
 export TF_IN_AUTOMATION=1
-{init_cmd}
-{apply_cmd}
+
+CMD="apply"
+OUT_FILE=""
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --plan) CMD="plan" ;;
+        --out) OUT_FILE="$2"; shift ;;
+        *) echo "Unknown parameter: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+echo "Running terraform $CMD..."
+
+# Init
+$BIN -chdir=$SRC_DIR init -input=false -plugin-dir=$PLUGIN_DIR {backend_args}
+
+if [ "$CMD" = "plan" ]; then
+    PLAN_ARGS=""
+    if [ -n "$OUT_FILE" ]; then
+        if [[ "$OUT_FILE" != /* ]]; then
+            OUT_FILE="$ROOT/$OUT_FILE"
+        fi
+        PLAN_ARGS="-out=$OUT_FILE"
+    fi
+    $BIN -chdir=$SRC_DIR plan -input=false $PLAN_ARGS {var_args}
+else
+    $BIN -chdir=$SRC_DIR apply -input=false -auto-approve {var_args}
+fi
 """.format(
-        init_cmd = init_cmd,
-        apply_cmd = apply_cmd,
+        bin_name = tf_bin_name,
+        module_dir = module.module_path,
+        backend_args = backend_args_str,
+        var_args = var_args_str
     )
 
-    ctx.actions.write(output = script, content = content, is_executable = True)
+    ctx.actions.write(run_script, run_script_content, is_executable=True)
 
-    runfiles = ctx.runfiles(
-        files = module.transitive_srcs.to_list() +
-                tf_runtime.deps +
-                [plan_file] +
-                ([ctx.file.tf_backend_config] if ctx.file.tf_backend_config else [])
+    args = ctx.actions.args()
+    args.add(output_tar)
+    args.add(tf_runtime.tf)
+    args.add(tf_runtime.mirror.path)
+    args.add(module.module_path)
+    args.add(run_script)
+
+    for f in all_srcs:
+        args.add("{}={}".format(f.path, f.path))
+    for f in var_files:
+        args.add("{}={}".format(f.path, f.path))
+    if backend_config:
+         args.add("{}={}".format(backend_config.path, backend_config.path))
+
+    inputs = all_srcs + var_files + tf_runtime.deps + [run_script, builder_script]
+    if backend_config:
+        inputs.append(backend_config)
+
+    ctx.actions.run(
+        outputs = [output_tar],
+        inputs = inputs,
+        executable = "python3",
+        arguments = [builder_script.path, args],
+        mnemonic = "TfPackage",
     )
 
-    return [DefaultInfo(executable = script, runfiles = runfiles)]
+    return [DefaultInfo(files = depset([output_tar]))]
 
-tf_apply = rule(
-    implementation = _tf_apply_impl,
-    attrs = {
-        "module": attr.label(providers = [TfModuleInfo], mandatory = True),
-        "plan": attr.label(allow_single_file = True, mandatory = True),
-        "tf_backend_config": attr.label(allow_single_file = True),
-        "tf_backend_config_vals": attr.string(),
-    },
-    executable = True,
-    toolchains = ["@rules_tf//:tf_toolchain_type"],
-)
-
-def _tf_plan_test_impl(ctx):
-    tf_runtime = ctx.toolchains["@rules_tf//:tf_toolchain_type"].runtime
-    module = ctx.attr.module[TfModuleInfo]
-
-    script = ctx.actions.declare_file(ctx.label.name + ".sh")
-
-    module_dir = module.module_path
-    plugin_dir = tf_runtime.mirror.short_path
-
-    var_files = ctx.files.tf_vars_files
-    var_args = []
-    for vf in var_files:
-        var_args.append("-var-file=$PWD/" + vf.short_path)
-
-    backend_args = []
-    if ctx.file.tf_backend_config:
-        backend_args.append("-backend-config=$PWD/" + ctx.file.tf_backend_config.short_path)
-    elif ctx.attr.tf_backend_config_vals:
-        for kv in ctx.attr.tf_backend_config_vals.split(","):
-            backend_args.append("-backend-config=" + kv)
-
-    init_cmd = "{tf} -chdir={dir} init -input=false -plugin-dir=$PWD/{plugin_dir}".format(
-        tf = tf_runtime.tf.short_path,
-        dir = module_dir,
-        plugin_dir = plugin_dir,
-    )
-    for arg in backend_args:
-        init_cmd += " " + arg
-
-    plan_cmd = "{tf} -chdir={dir} plan -input=false".format(
-        tf = tf_runtime.tf.short_path,
-        dir = module_dir,
-    )
-    for arg in var_args:
-        plan_cmd += " " + arg
-
-    content = """#!/bin/bash
-set -e
-export TF_IN_AUTOMATION=1
-{init_cmd}
-{plan_cmd}
-""".format(init_cmd=init_cmd, plan_cmd=plan_cmd)
-
-    ctx.actions.write(output = script, content = content, is_executable = True)
-
-    runfiles = ctx.runfiles(
-        files = module.transitive_srcs.to_list() +
-                tf_runtime.deps +
-                var_files +
-                ([ctx.file.tf_backend_config] if ctx.file.tf_backend_config else [])
-    )
-
-    return [DefaultInfo(executable = script, runfiles = runfiles)]
-
-tf_plan_test = rule(
-    implementation = _tf_plan_test_impl,
+tf_package = rule(
+    implementation = _tf_package_impl,
     attrs = {
         "module": attr.label(providers = [TfModuleInfo], mandatory = True),
         "tf_vars_files": attr.label_list(allow_files = True),
         "tf_backend_config": attr.label(allow_single_file = True),
         "tf_backend_config_vals": attr.string(),
     },
-    test = True,
     toolchains = ["@rules_tf//:tf_toolchain_type"],
 )
 
-
-def tf_deployment(name, module, tf_vars_files = None, tf_backend_config = None, **kwargs):
-
-    if tf_vars_files == None:
-        tf_vars_files = native.glob([
-            "terraform.tfvars",
-            "terraform.tfvars.json",
-            "*.auto.tfvars",
-            "*.auto.tfvars.json",
-        ], allow_empty = True)
-
-    backend_config_file = None
-    backend_config_vals = None
-
-    if tf_backend_config:
-        if "=" in tf_backend_config:
-            backend_config_vals = tf_backend_config
-        else:
-            backend_config_file = tf_backend_config
-
-    plan_name = name + ".plan"
-    apply_name = name + ".apply"
-    test_name = name + ".test"
-
-    tf_plan(
-        name = plan_name,
-        module = module,
-        tf_vars_files = tf_vars_files,
-        tf_backend_config = backend_config_file,
-        tf_backend_config_vals = backend_config_vals,
-        **kwargs
-    )
-
-    tf_apply(
-        name = apply_name,
-        module = module,
-        plan = plan_name,
-        tf_backend_config = backend_config_file,
-        tf_backend_config_vals = backend_config_vals,
-        **kwargs
-    )
-
-    tf_plan_test(
-        name = test_name,
-        module = module,
-        tf_vars_files = tf_vars_files,
-        tf_backend_config = backend_config_file,
-        tf_backend_config_vals = backend_config_vals,
-        **kwargs
-    )
-
-    native.filegroup(
-        name = name,
-        srcs = [plan_name],
-        **kwargs
-    )
+def tf_deployment(name, **kwargs):
+    tf_package(name = name, **kwargs)

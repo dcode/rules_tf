@@ -1,6 +1,6 @@
 TfInfo = provider(
     doc = "Information about how to invoke Terraform/Tofu.",
-    fields = ["tf", "deps", "mirror"],
+    fields = ["tf", "deps", "mirror", "os", "arch"],
 )
 
 def _tf_toolchain_impl(ctx):
@@ -9,6 +9,8 @@ def _tf_toolchain_impl(ctx):
             tf = ctx.file.tf,
             mirror = ctx.file.mirror,
             deps = [ctx.file.tf, ctx.file.mirror],
+            os = ctx.attr.os,
+            arch = ctx.attr.arch,
         ),
     )
     return [toolchain_info]
@@ -28,5 +30,7 @@ tf_toolchain = rule(
             executable = True,
             cfg = "target",
         ),
+        "os": attr.string(mandatory = True),
+        "arch": attr.string(mandatory = True),
     },
 )

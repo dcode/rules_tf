@@ -1,4 +1,4 @@
-load("@rules_tf//tf:def.bzl", "tf_deployment", "tf_module")
+load("@rules_tf//tf:def.bzl", "tf_module", "tf_package")
 
 tf_module(
     name = "root-mod-a",
@@ -14,7 +14,7 @@ tf_module(
     tflint_config = "//tf:tflint-custom-config",
 )
 
-tf_deployment(
+tf_package(
     name = "deployment",
     module = ":root-mod-a",
 )

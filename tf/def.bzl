@@ -6,6 +6,12 @@ load("@rules_tf//tf/rules:tf-providers-versions.bzl", _tf_providers_versions = "
 load("@rules_tf//tf/rules:tf-lint.bzl", "tf_lint_test")
 load("@rules_tf//tf/rules:tf-deployment.bzl", _tf_package = "tf_package")
 load("@rules_tf//tf/rules:tf-module.bzl", _tf_module = "tf_module", "tf_module_deps", "tf_artifact", "tf_validate_test", _tf_format = "tf_format", "tf_format_test")
+load("@rules_tf//tf/rules:tf-config.bzl", _tf_config = "tf_config")
+load("@rules_tf//tf/rules:tf-plan-test.bzl", "tf_plan_test")
+load("@rules_tf//tf/rules:tf-runner.bzl", "tf_runner")
+
+def tf_config(**kwargs):
+    _tf_config(**kwargs)
 
 def tf_module(name,
               providers_versions = None,

@@ -145,11 +145,12 @@ export TF_IN_AUTOMATION=1
 CMD="apply"
 OUT_FILE=""
 
+EXTRA_ARGS=()
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --plan) CMD="plan" ;;
         --out) OUT_FILE="$2"; shift ;;
-        *) echo "Unknown parameter: $1"; exit 1 ;;
+        *) EXTRA_ARGS+=("$1") ;;
     esac
     shift
 done
@@ -167,9 +168,9 @@ if [ "$CMD" = "plan" ]; then
         fi
         PLAN_ARGS="-out=$OUT_FILE"
     fi
-    $BIN -chdir=$SRC_DIR plan -input=false $PLAN_ARGS {var_args}
+    $BIN -chdir=$SRC_DIR plan -input=false $PLAN_ARGS {var_args} "${EXTRA_ARGS[@]}"
 else
-    $BIN -chdir=$SRC_DIR apply -input=false -auto-approve {var_args}
+    $BIN -chdir=$SRC_DIR apply -input=false -auto-approve {var_args} "${EXTRA_ARGS[@]}"
 fi
 """.format(
         bin_name = tf_bin_name,

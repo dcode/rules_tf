@@ -131,6 +131,7 @@ if __name__ == "__main__":
             vals.append("-backend-config=" + kv)
         backend_args_str = " ".join(vals)
 
+    print("module_path: " + module.module_path)
     run_script = ctx.actions.declare_file("run.sh")
     run_script_content = """#!/bin/bash
 set -e
@@ -168,9 +169,9 @@ if [ "$CMD" = "plan" ]; then
         fi
         PLAN_ARGS="-out=$OUT_FILE"
     fi
-    $BIN -chdir=$SRC_DIR plan -input=false $PLAN_ARGS {var_args} "${EXTRA_ARGS[@]}"
+    $BIN -chdir=$SRC_DIR plan -input=false $PLAN_ARGS {var_args} "${{EXTRA_ARGS[@]}}"
 else
-    $BIN -chdir=$SRC_DIR apply -input=false -auto-approve {var_args} "${EXTRA_ARGS[@]}"
+    $BIN -chdir=$SRC_DIR apply -input=false -auto-approve {var_args} "${{EXTRA_ARGS[@]}}"
 fi
 """.format(
         bin_name = tf_bin_name,

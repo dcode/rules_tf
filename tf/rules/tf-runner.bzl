@@ -51,8 +51,8 @@ fi
 # However, bazel run usually executes from the execroot or similar, but the binaries are in runfiles.
 # For simplicity, we use the short_paths which are relative to the workspace root in runfiles.
 
-# Find the workspace name
-WORKSPACE_NAME=$(basename "${RUNFILES_DIR}")
+# Workspace Name
+WORKSPACE_NAME="{workspace_name}"
 
 # TF binary location
 TF_BIN="${RUNFILES_DIR}/${WORKSPACE_NAME}/{tf_bin_path}"
@@ -92,6 +92,7 @@ echo "Running Terraform $@"
         module_package = module.module_path,
         backend_args = backend_args_str,
         var_args = var_args_str,
+        workspace_name = ctx.workspace_name,
     )
 
     ctx.actions.write(out_file, script_content, is_executable=True)

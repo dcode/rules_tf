@@ -1,0 +1,40 @@
+load("@rules_tf//tf:def.bzl", "tf_module", "tf_plan_test", "tf_runner", "tf_package")
+
+# tf_module contains the modules sources (*.tf, *.tf.json)
+# and any dependent modules
+tf_module(
+    name = "gitops_module",
+    srcs = ["main.tf"],
+)
+
+# tf_package contains all the files from the tf_module
+# as well as the full toolchain that can be used to
+# validate, plan, and apply the module
+tf_package(
+    name = "gitops",
+    module = ":gitops_module",
+    # Optionally, pass in tfvars and backend config files
+    # tf_vars_files = "terraform.tfvars",
+    # tf_backend_config = "dev.backend.tfbackend",
+)
+
+# tf_plan_test operates as a bazel test to prevent accidental
+# infrastructure changes. Passing an environment variable with
+# expected changes will prevent failure.
+#
+# Example:
+#   bazel test --test_env=TF_EXPECT_CHANGE=plan //:plan
+tf_plan_test(
+    name = "plan",
+    package = ":gitops",
+    fail_on_diff = True,
+)
+
+# tf_runner allows local execution to plan or apply the module
+tf_runner(
+    name = "runner",
+    package = ":gitops",
+    # Optionally, pass in tfvars and backend config files
+    # tf_vars_files = "terraform.tfvars",
+    # tf_backend_config = "dev.backend.tfbackend",
+)
